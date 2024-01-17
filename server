@@ -1,0 +1,143 @@
+<?php
+
+// echo "Server running on port ";
+
+// require_once(dirname(__FILE__) ."\\");
+
+// Set the IP address and port to listen on
+$host = '127.0.0.1';
+$port = 7070;
+
+// Create a socket for listening
+$socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+socket_bind($socket, $host, $port);
+socket_listen($socket);
+
+echo "Listening on http://$host:$port\n";
+
+
+
+
+// Accept incoming connections
+while (true) {
+    $clientSocket = socket_accept($socket);
+
+    // Read the data sent by the client
+    $requestData = socket_read($clientSocket, 1024);
+    echo "Requested..." . PHP_EOL;
+
+    // Extract the body of the request
+    list($headers, $body) = explode("\r\n\r\n", $requestData, 2);
+
+    // Parse headers into an associative array
+    $headersArray = [];
+    $headerLines = explode("\r\n", $headers);
+    foreach ($headerLines as $line) {
+        list($key, $value) = explode(': ', $line, 2);
+        $headersArray[$key] = $value;
+    }
+    $parsedData = parse_raw_http_request($body);
+
+
+    require_once(__DIR__ . "\\index.php");
+
+
+    foreach ($headersArray as $key => $value) {
+        preg_match('/^([A-Z]+)\s+([^\s]+)\s+HTTP/', $key, $matches);
+
+        // Check if it's a valid HTTP request line
+        if (count($matches) === 3) {
+            $method = $matches[1];
+            $uri = $matches[2];
+            // Split the string based on "/"
+            $segments = explode("/", $uri);
+
+            $getParams = explode("?", $uri);
+            // Parse the query string into an associative array
+            if (!!$getParams[1]) {
+                # code...
+                parse_str($getParams[1], $params);
+            }
+            // var_dump($params);
+
+            // Remove empty elements from the array (in case there are leading or trailing slashes)
+            $segments = array_filter($segments);
+
+            // Get the route from the URI
+            $route = isset($segments[1]) ? $segments[1] : '';
+
+            $parsedData['getParams'] = $params;
+            //         // Process the request (you can customize this part)
+            $response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n";
+            // Enable CORS for all origins
+            $response .= "Access-Control-Allow-Origin: *\r\n";
+            $response .= "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+            $response .= "Access-Control-Allow-Headers: Content-Type\r\n";
+            $response .= "\r\n" . resolve($route, $parsedData); // Pass the route and body to the 'resolve' function
+        }
+    }
+
+    // Use the custom function to parse the raw HTTP request body
+
+
+    // Send the response back to the client
+    socket_write($clientSocket, $response);
+
+    // Close the client socket
+    socket_close($clientSocket);
+}
+
+
+function parse_raw_http_request($input = null)
+{
+    // Parse multipart/form-data request
+    $boundary = substr($input, 0, strpos($input, "\r\n"));
+    if (!$boundary) return;
+
+    // Split the input based on the boundary
+    $parts = array_slice(explode($boundary, $input), 1, -1);
+
+    $data = [];
+    foreach ($parts as $part) {
+        // Separate headers and content
+        list($rawHeaders, $body) = explode("\r\n\r\n", $part, 2);
+
+        // Parse headers into an associative array
+        $headers = [];
+        $headerLines = explode("\r\n", $rawHeaders);
+        foreach ($headerLines as $line) {
+            list($key, $value) = explode(': ', $line, 2);
+            $headers[$key] = $value;
+        }
+
+        // Get the form field name (e.g., 'categoryId')
+        preg_match('/name="(.*?)"/', $headers['Content-Disposition'], $matches);
+        $fieldName = $matches[1];
+
+        // Store the form field value in the $data array
+        $data[$fieldName] = $body;
+    }
+
+    // Decode the form field values
+    foreach ($data as $fieldName => $value) {
+        // Remove leading and trailing newlines
+        $value = trim($value);
+
+        // Remove the boundary from the end
+        $value = str_replace($boundary . '--', '', $value);
+
+        // Store the decoded value
+        $data[$fieldName] = $value;
+    }
+
+    // Retrieve URL parameters (if any)
+    $urlParameters = [];
+    if (isset($_SERVER['QUERY_STRING'])) {
+        parse_str($_SERVER['QUERY_STRING'], $urlParameters);
+    }
+
+    // Merge URL parameters with parsed data
+    $mergedData = array_merge($data, $urlParameters);
+
+    return $mergedData;
+}
